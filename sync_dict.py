@@ -34,7 +34,7 @@ class SyncDict():
                 "dict":update_dict_copy
             }
 
-            msg_str = chr(254) + json.dumps(msg_dict) + chr(255)
+            msg_str = json.dumps(msg_dict) + chr(255) 
 
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -52,7 +52,7 @@ class SyncDict():
             finally:
                 sock.close()
 
-            raw_input("press enter")
+            #raw_input("press enter")
 
 
 
