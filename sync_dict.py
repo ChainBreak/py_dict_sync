@@ -27,21 +27,21 @@ class SyncDict():
                 update_dict_copy = self.update_dict
                 self.update_dict = {}
 
-            msg_dict = {
+            send_dict = {
                 "name":self.name,
                 "token":self.token,
                 "trans_count":self.trans_count,
                 "dict":update_dict_copy
             }
 
-            msg_str = json.dumps(msg_dict) + chr(255) 
+            send_str = json.dumps(send_dict) + chr(255)
 
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(1.0)
                 sock.connect((self.host,self.port))
-                sock.sendall(msg_str)
-                print(len(msg_str))
+                sock.sendall(send_str)
+                # print(len(send_str))
 
             except Exception as e:
                 print("ethernet error")
@@ -93,6 +93,6 @@ if __name__ == "__main__":
         d["counter"] = 0
 
         while True:
-            for i in range(300):
+            for i in range(5):
                 d[str(i)] = i
             time.sleep(0.1)
