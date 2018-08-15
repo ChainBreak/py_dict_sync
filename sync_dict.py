@@ -20,37 +20,75 @@ class SyncDict():
         self.sync_thread.daemon = True
 
     def sync_loop(self):
-        while self.running:
+        self.sock = None
+        self.recv_str = ""
+        def wait():
             time.sleep(1.0)
+            return "connect"
 
-            with self.dict_lock as dl:
-                update_dict_copy = self.update_dict
+        def connect():
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.settimeout(1.0)
+            self.sock.connect((self.host,self.port))
+            return "send"
+
+        def send():
+            with self.dict_lock:
+                send_dict = {
+                    "name":self.name,
+                    "token":self.token,
+                    "trans_count":self.trans_count,
+                    "dict":self.update_dict
+                }
+
+                send_str = json.dumps(send_dict) + chr(255)
+                self.sock.sendall(send_str)
                 self.update_dict = {}
+            return "recv"
 
-            send_dict = {
-                "name":self.name,
-                "token":self.token,
-                "trans_count":self.trans_count,
-                "dict":update_dict_copy
-            }
+        def recv():
+            self.recv_str += self.sock.recv(1024)
+            
+            if len(self.recv_str) > 0:
+                if self.recv_str[-1] == chr(255):
+                    recv_dict = json.loads(self.recv_str[:-1])
+                    self.recv_str = ""
 
-            send_str = json.dumps(send_dict) + chr(255)
+                    with self.dict_lock:
+                        for key,value in recv_dict["dict"].items():
+                            self.dict[key] = value
 
+
+                    self.trans_count = recv_dict["trans_count"]
+                    # print(self.trans_count)
+                    return "close"
+
+            return "recv"
+
+        def close():
+            if not self.sock is None:
+                self.sock.close()
+            self.sock = None
+            self.recv_str = ""
+            return "wait"
+
+        states = {
+            "wait": wait,
+            "connect": connect,
+            "send": send,
+            "recv": recv,
+            "close": close
+        }
+
+
+        state = "wait"
+        while self.running:
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(1.0)
-                sock.connect((self.host,self.port))
-                sock.sendall(send_str)
-                # print(len(send_str))
-
+                # print(state)
+                state = states[state]()
             except Exception as e:
-                print("ethernet error")
-                print(e)
-                with self.dict_lock as dl:
-                    update_dict_copy.update(self.update_dict)
-                    self.update_dict = update_dict_copy
-            finally:
-                sock.close()
+                state = "close"
+                print("Error: %s" % e)
 
             #raw_input("press enter")
 
@@ -83,16 +121,18 @@ class SyncDict():
 
 
 if __name__ == "__main__":
-    with SyncDict("my_dict","abc123") as d:
-        d["zero"] = 0
-        d["one"] = 1
-        d["two"] = 2
-        d["list"] = [1,2,3]
-        d["dict"] = {"test":1}
+    with SyncDict("my_dict","abc123") as d1:
+        with SyncDict("my_dict","abc123") as d2:
+            d1["a"] = 1
+            d1["b"] = 1
+            d2["b"] = 1
+            d2["a"] = 1
 
-        d["counter"] = 0
+            while True:
+                d1["a"] += 1
+                d2["b"] += 1
 
-        while True:
-            for i in range(5):
-                d[str(i)] = i
-            time.sleep(0.1)
+                print("a %i %i" % ( d1["a"], d2["a"]))
+                time.sleep(0.5)
+                print("b %i %i" % ( d1["b"], d2["b"]))
+                time.sleep(0.5)
