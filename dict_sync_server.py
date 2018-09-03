@@ -11,121 +11,147 @@ class User():
         self.named_dicts = {}
         self.lock = threading.Lock()
 
-    def process_dict(self,recv_dict):
-        send_dict = {}
-        if "name" in recv_dict:
-            name = recv_dict["name"]
-
-            with self.lock:
-                if not name in self.named_dicts:
-                    named_dict = NamedDict()
-                    self.named_dicts[name] = named_dict
-                else:
-                    named_dict = self.named_dicts[name]
-
-            send_dict = named_dict.process_dict(recv_dict)
-        return send_dict
-
 
 
 class NamedDict():
     def __init__(self):
         self.trans_count = 0
-        self.dict = {"test":(4,"cheese")}
+        self.dict = {}
         self.lock = threading.Lock()
 
-    def process_dict(self,recv_dict):
-        send_dict = {}
-        try:
-
-                client_dict = recv_dict["dict"]
-                client_trans_count = recv_dict["trans_count"]
 
 
-                with self.lock:
-
-                    if client_trans_count > self.trans_count:
-                        self.trans_count = client_trans_count
-
-                    send_dict["dict"] = {}
-                    for key, (trans_count,value) in self.dict.items():
-                        if trans_count > client_trans_count:
-                            send_dict["dict"][key] = value
-                            print("returning: %s %s" % (key,value))
-
-                    self.trans_count += 1
-                    send_dict["trans_count"] = self.trans_count
-
-                    for key,value in client_dict.items():
-                        self.dict[key] = (self.trans_count,value)
+class ClientHandler():
+    def __init__(self,server,client_sock):
 
 
+        #record process start time for detecting time out
+        start_time = time.time()
 
-        except Exception as e:
-            print(e)
-        return send_dict
+
+        def case_init():
+
+            self.recv_str = ""
+            self.recv_dict = {}
+            self.send_dict = {}
+            self.user = None
+            self.named_dict = None
+            return "recv"
+
+        def case_recv():
+            #read string from client and append to message string
+            self.recv_str += client_sock.recv(1024)
+            if len(self.recv_str):
+                #TODO: reject client if the string gets to large for performance
+                if self.recv_str[-1] == chr(255):
+                    self.recv_dict = json.loads(self.recv_str[:-1])
+                    return "token"
+            time.sleep(0.1)
+            return "recv"
+
+        def case_token():
+            user_token = self.recv_dict["token"]
+            with server.users_lock:
+                self.user = server.users_dict[user_token]
+            return "user"
+
+        def case_user():
+            name = self.recv_dict["name"]
+            with self.user.lock:
+                if not name in self.user.named_dicts:
+                    #TODO: Limit the number of dicts a user can have based on payment package
+                    self.named_dict = NamedDict()
+                    self.user.named_dicts[name] = self.named_dict
+                else:
+                    self.named_dict = self.user.named_dicts[name]
+            return "named_dict"
+
+
+        def case_named_dict():
+
+            client_update_dict = self.recv_dict["dict"]
+            client_trans_count = self.recv_dict["trans_count"]
+
+            with self.named_dict.lock:
+                self.send_dict["dict"] = {}
+                #iterate through the servers named dict and collect everything that is ahead of the client
+                for key, (trans_count,value) in self.named_dict.dict.items():
+                    if trans_count > client_trans_count:
+                        self.send_dict["dict"][key] = value
+
+                #increment the servers transaction counter for this named dict
+                self.named_dict.trans_count += 1
+                self.send_dict["trans_count"] = self.named_dict.trans_count
+
+                for key,value in client_update_dict.items():
+                    self.named_dict.dict[key] = (self.named_dict.trans_count,value)
+
+            return "send"
+
+        def case_send():
+            send_str = json.dumps(self.send_dict) + chr(255)
+            client_sock.sendall(send_str)
+
+            return "init"
+
+        states = {
+        "init": case_init,
+        "recv": case_recv,
+        "token": case_token,
+        "user": case_user,
+        "named_dict": case_named_dict,
+        "send": case_send
+        }
+
+        state = "init"
+
+        #while connected
+        while time.time() - start_time < 2.0:
+            try:
+                state = states[state]()
+            except Exception as e:
+                print e
+                #TODO: Return errors to the client
+
+                state = "init"
+        client_sock.close()
+
+
+
+
+
 
 
 
 class DictSyncServer():
     def __init__(self,host,port):
+        #create a new socket and bind it
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind((host, port))
         sock.listen(5)
-        self.lock = threading.Lock()
-        self.user_dict = {"abc123":User()}
 
-        while True:
-            client_sock, addr = sock.accept()
+        #this lock is used to make sure that only one thread edits the users_dict at one time
+        self.users_lock = threading.Lock()
 
-            thread.start_new_thread(self.process_client, (client_sock,))
-        sock.close()
+        #initialise the dictionary of users_dict
+        #TODO: will need to load user tokens for a database or something
+        self.users_dict = {"abc123":User()}
 
+        try:
+            print "Dict sync Server Starting"
+            #forever
+            while True:
+                #Accept clients and start client hander objects in their own threads
+                client_sock, addr = sock.accept()
+                thread.start_new_thread(ClientHandler, (self,client_sock))
+        except KeyboardInterrupt:
+            pass
+        finally:
+            #close the socekt
+            sock.close()
+            print("socket closed")
 
-
-    def process_client(self,client_sock):
-        #record process start time for detecting time out
-        start_time = time.time()
-        #create empty message to append to
-        recv_str = ""
-        #while connected
-        while True:
-            #read string from client and append to message string
-            recv_str += client_sock.recv(1024)
-            #if the special character is found
-            if len(recv_str)>0:
-                if recv_str[-1] == chr(255):
-
-                    no_errors = True
-                    try:
-                        recv_dict = json.loads(recv_str[:-1])
-                    except Exception as e:
-                        print(e)
-                        no_errors = False
-
-                    if no_errors:
-                        try:
-                            token = recv_dict["token"]
-                            with self.lock:
-                                    user = self.user_dict[token]
-                        except Exception as e:
-                            print(e)
-                            no_errors = False
-
-                    if no_errors:
-                        send_dict = user.process_dict(recv_dict)
-
-                        send_str = json.dumps(send_dict) + chr(255)
-                        client_sock.sendall(send_str)
-                    recv_str = ""
-
-
-            time.sleep(0.01)
-            if time.time() - start_time > 1.0:
-                break
-
-        client_sock.close()
 
 
 if __name__ == '__main__':
-    DictSyncServer("",12345)
+    DictSyncServer("",12344)
