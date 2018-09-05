@@ -8,17 +8,8 @@ import json
 
 class User():
     def __init__(self):
-        self.named_dicts = {}
-        self.lock = threading.Lock()
-
-
-
-class NamedDict():
-    def __init__(self):
-        self.trans_count = 0
         self.dict = {}
         self.lock = threading.Lock()
-
 
 
 class ClientHandler():
@@ -38,7 +29,6 @@ class ClientHandler():
         "init": self.state_init,
         "recv": self.state_recv,
         "lookup_user": self.state_lookup_user,
-        "get_dict": self.state_get_dict,
         "update": self.state_update,
         "send": self.state_send
         }
@@ -47,13 +37,14 @@ class ClientHandler():
 
         #while connected
         while time.time() - start_time < 2.0:
+
             try:
                 state = states[state]()
             except Exception as e:
                 print e
                 #TODO: Return errors to the client
-
                 state = "init"
+
         client_sock.close()
 
 
@@ -103,38 +94,39 @@ class ClientHandler():
         with self.server.users_lock:
             self.user = self.server.users_dict[user_token]
 
-        return "get_dict"
-
-    def state_get_dict(self):
-        name = self.recv_dict["name"]
-        with self.user.lock:
-            if not name in self.user.named_dicts:
-                #TODO: Limit the number of dicts a user can have based on payment package
-                self.named_dict = NamedDict()
-                self.user.named_dicts[name] = self.named_dict
-            else:
-                self.named_dict = self.user.named_dicts[name]
         return "update"
 
-
     def state_update(self):
+        client_dict = self.recv_dict["dict"]
+        server_dict = self.user.dict
+        update_dict = self.send_dict["dict"] = {}
+        with self.user.lock:
+            #TODO: Limit the number of dicts a user can have based on payment package
+            #for every dictionary item sent from the client
+            for key,(client_trans_count, client_value) in client_dict.items():
+                #check if the key already exists
+                if key in server_dict:
 
-        client_update_dict = self.recv_dict["dict"]
-        client_trans_count = self.recv_dict["trans_count"]
+                    server_trans_count, server_value = server_dict[key]
+                    if client_trans_count == -1:
+                        new_trans_count = server_trans_count + 1
+                        #TODO: record update time to remove old items
+                        server_dict[key] = (new_trans_count, client_value)
+                        update_dict[key] = (new_trans_count, client_value)
 
-        with self.named_dict.lock:
-            self.send_dict["dict"] = {}
-            #iterate through the servers named dict and collect everything that is ahead of the client
-            for key, (trans_count,value) in self.named_dict.dict.items():
-                if trans_count > client_trans_count:
-                    self.send_dict["dict"][key] = value
+                    elif client_trans_count < server_trans_count:
+                        update_dict[key] = (server_trans_count, server_value)
+                else:
+                    if client_trans_count == -1:
+                        #TODO: record update time to remove old items
+                        server_dict[key] = (0, client_value)
+                        update_dict[key] = (0,)
+                    else:
+                        server_dict[key] = (client_trans_count, client_value)
 
-            #increment the servers transaction counter for this named dict
-            self.named_dict.trans_count += 1
-            self.send_dict["trans_count"] = self.named_dict.trans_count
+        return "send"
 
-            for key,value in client_update_dict.items():
-                self.named_dict.dict[key] = (self.named_dict.trans_count,value)
+
 
         return "send"
 

@@ -9,12 +9,10 @@ class SyncDict():
         self.name = name
         self.token = token
         self.sync_delay = sync_delay
-        self.trans_count = 0
         self.host = server_addr
         self.port = server_port
 
         self.dict = {}
-        self.update_dict = {}
         self.dict_lock = threading.Lock()
 
         self.sync_thread = threading.Thread(target=self.sync_loop)
@@ -24,33 +22,32 @@ class SyncDict():
         self.sock = None
         self.recv_str = ""
 
-        def case_wait():
+        def state_wait():
             time.sleep(self.sync_delay)
             return "connect"
 
-        def case_connect():
+        def state_connect():
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(1.0)
             self.sock.connect((self.host,self.port))
             return "send"
 
-
-        def case_send():
+        def state_send():
             with self.dict_lock:
+
                 send_dict = {
-                    "name":self.name,
                     "token":self.token,
-                    "trans_count":self.trans_count,
-                    "dict":self.update_dict
+                    "dict": self.dict,
                 }
 
                 send_str = json.dumps(send_dict) + chr(255)
+
                 self.sock.sendall(send_str)
                 self.update_dict = {}
             return "recv"
 
 
-        def case_recv():
+        def state_recv():
             self.recv_str += self.sock.recv(1024)
 
             if len(self.recv_str) > 0:
@@ -59,21 +56,14 @@ class SyncDict():
                     self.recv_str = ""
 
                     with self.dict_lock:
-                        for key,value in recv_dict["dict"].items():
-                            self.dict[key] = value
+                        for key,(trans_count,value) in recv_dict["dict"].items():
+                            self.dict[key] = (trans_count,value)
 
-                    next_state = "close"
-                    if self.trans_count > recv_dict["trans_count"]:
-                        self.update_dict.update(self.dict)
-                        next_state = "send"
-
-                    self.trans_count = recv_dict["trans_count"]
-
-                    return next_state
+                    return  "close"
 
             return "recv"
 
-        def case_close():
+        def state_close():
             if not self.sock is None:
                 self.sock.close()
             self.sock = None
@@ -81,11 +71,11 @@ class SyncDict():
             return "wait"
 
         states = {
-            "wait": case_wait,
-            "connect": case_connect,
-            "send": case_send,
-            "recv": case_recv,
-            "close": case_close
+            "wait": state_wait,
+            "connect": state_connect,
+            "send": state_send,
+            "recv": state_recv,
+            "close": state_close
         }
 
 
@@ -93,6 +83,7 @@ class SyncDict():
         while self.running:
             try:
                 # print(state)
+                # time.sleep(0.5)
                 state = states[state]()
             except Exception as e:
                 state = "close"
@@ -111,18 +102,27 @@ class SyncDict():
 
     def __getitem__(self,key):
         with self.dict_lock:
-            return self.dict.get(key,None)
+            if key in self.dict:
+                _,value = self.dict[key]
+                return value
+            else:
+                self.dict[key] = (0,None)
+                return None
 
     def __setitem__(self,key,value):
         with self.dict_lock:
-            self.dict[key] = self.update_dict[key] =  value
+            self.dict[key] = (-1,value)
 
     def __delitem__(self,key):
-        pass
+        with self.dict_lock:
+            del self.dict[key]
 
     def __len__(self):
         return len(self._dict)
 
     def __str__(self):
         with self.dict_lock:
-            return str(self.dict)
+            msg = ""
+            for key,(trans_count,value) in self.dict.items():
+                msg += "%s, %s, %s\n" % (key,str(trans_count),str(value))
+            return msg
