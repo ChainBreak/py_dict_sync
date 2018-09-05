@@ -2,11 +2,13 @@
 from sync_dict import SyncDict
 import time
 if __name__ == "__main__":
-    with SyncDict("my_dict","abc123") as d:
-        d["a"] = 1
-        d["a_"] = "a"
+    with SyncDict("my_dict","abc123",sync_delay=0.1) as d:
+        d["a1"] = 1
+        d["a2"] = 0
+        d["b1"]
+        d["b2"]
         while True:
-            d["a"] += 1
-            print(str(d.trans_count) + " " +str(d))
 
-            time.sleep(0.5)
+            print(str(d))
+            d["a1"] += 1
+            time.sleep(1)
