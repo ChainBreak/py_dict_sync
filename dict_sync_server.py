@@ -100,6 +100,7 @@ class ClientHandler():
         client_dict = self.recv_dict["dict"]
         server_dict = self.user.dict
         update_dict = self.send_dict["dict"] = {}
+
         with self.user.lock:
             #TODO: Limit the number of dicts a user can have based on payment package
             #for every dictionary item sent from the client
@@ -108,7 +109,7 @@ class ClientHandler():
                 if key in server_dict:
 
                     server_trans_count, server_value = server_dict[key]
-                    if client_trans_count == -1:
+                    if client_trans_count == -1 or client_trans_count > server_trans_count:
                         new_trans_count = server_trans_count + 1
                         #TODO: record update time to remove old items
                         server_dict[key] = (new_trans_count, client_value)
@@ -119,8 +120,8 @@ class ClientHandler():
                 else:
                     if client_trans_count == -1:
                         #TODO: record update time to remove old items
-                        server_dict[key] = (0, client_value)
-                        update_dict[key] = (0,)
+                        server_dict[key] = (1, client_value)
+                        update_dict[key] = (1, client_value)
                     else:
                         server_dict[key] = (client_trans_count, client_value)
 
